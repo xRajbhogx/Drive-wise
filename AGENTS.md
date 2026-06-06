@@ -1,207 +1,147 @@
-# Expo HAS CHANGED
+# Drivewise Agent Instructions
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v55.0.0/ before writing any code.
+## Goal
+Build Drivewise, a mobile app that uses device sensors to detect driving behavior and generate a driving safety score.
 
----
+This is an MVP-first project. Keep the implementation simple, stable, and easy to explain in a demo.
 
-## Project Overview
+## Final MVP Scope
+Build only these features:
+1. Start Drive and End Drive
+2. Live sensor capture during a session
+3. Event detection for:
+   - Harsh Braking
+   - Harsh Acceleration
+   - Sharp Turns
+   - Aggressive Steering
+   - Excessive Device Movement
+   - Possible Phone Handling During Driving
+4. Score calculation from 100 downward
+5. Session summary screen
+6. Basic dashboard with score, duration, and event breakdown
 
-**Drivewise** is a React Native (Expo managed workflow) app that uses device sensors to analyze
-driving behavior in real time and produce a safety score.
+Do not add stretch goals unless the MVP is complete:
+- Route replay
+- Event heatmap
+- AI feedback
+- Historical comparison
 
-**Stack:** Expo SDK 55 · React Native · TypeScript · Expo Router · expo-sensors · React Native Reanimated
+## Tech Stack
+- Expo SDK 55
+- React Native
+- TypeScript
+- Expo Router
+- expo-sensors
+- React Native Reanimated only if needed for UI polish
 
-No external state libraries. All state is plain React `useState` / `useRef`.
-
----
+## Non-Negotiable Rules
+1. Use only plain React state (`useState`, `useRef`)
+2. No external state libraries
+3. No raw sensor streams in React state
+4. All sensor cleanup must happen in `useEffect` cleanup
+5. Debounce repeated events
+6. Keep detection logic pure and outside React
+7. Threshold values must live in one file only
+8. No `any`
+9. Keep the UI dark and clean
+10. Do not overcomplicate the implementation
 
 ## Project Structure
+- `app/index.tsx` — home screen with Start Drive
+- `app/ActiveDriveScreen.tsx` — live drive session
+- `app/SessionSummary.tsx` — final summary
+- `app/_layout.tsx` — routing setup
 
-```
-drivewise/
-├── app/
-│   ├── index.tsx           # Home screen — Start Drive button + last session card
-│   ├── ActiveDriveScreen.tsx          # Live drive screen — sensors, events, score
-│   ├── SessionSummary.tsx         # Post-drive summary — final score, breakdown
-│   └── _layout.tsx
-├── src/
-│   ├── hooks/
-│   │   └── useDrivingSensors.ts   # All sensor logic lives here
-│   ├── engine/
-│   │   ├── thresholds.ts          # All threshold constants — edit here only
-│   │   ├── eventDetector.ts       # Pure detection logic (no React)
-│   │   └── scoreEngine.ts         # Score + safety rating calculation
-│   ├── types/
-│   │   └── index.ts               # DriveEvent, SessionSummary types
-│   └── components/
-│       ├── ScoreRing.tsx          # Circular score display
-│       ├── EventFeed.tsx          # Scrollable event list
-│       └── SummaryCard.tsx        # Event breakdown card
-├── app.json
-├── tailwind.config.js
-└── tsconfig.json
-```
+- `src/hooks/useDrivingSensors.ts` — sensor subscriptions and session control
+- `src/engine/thresholds.ts` — all threshold constants
+- `src/engine/eventDetector.ts` — pure event detection logic
+- `src/engine/scoreEngine.ts` — score and safety rating logic
+- `src/types/index.ts` — shared types
+- `src/components/` — reusable UI components
 
----
+## Sensor Strategy
+Use these sensors:
+- Accelerometer
+- Gyroscope
+- Device Motion
+- Magnetometer only if time permits
 
-## Sensor Architecture
+Recommended update intervals:
+- Accelerometer: 100ms
+- Gyroscope: 100ms
+- Device Motion: 200ms
+- Magnetometer: optional, 200ms or slower
 
-| Sensor | Expo API | Interval | Purpose |
-|---|---|---|---|
-| Accelerometer | `expo-sensors/Accelerometer` | 100ms | Braking, acceleration, phone handling |
-| Gyroscope | `expo-sensors/Gyroscope` | 100ms | Sharp turns, aggressive steering |
-| DeviceMotion | `expo-sensors/DeviceMotion` | 200ms | Composite movement |
+## Event Detection Strategy
+Use simple rule-based thresholds.
 
-### Sensor Lifecycle — Always Follow This Pattern
+Example:
+- Harsh Brake: negative Y acceleration spike
+- Harsh Acceleration: positive Y acceleration spike
+- Sharp Turn: large Z-axis gyroscope rotation
+- Aggressive Steering: stronger Z-axis gyroscope rotation
+- Excessive Movement: strong Device Motion magnitude
+- Phone Handling: large accelerometer magnitude spike
 
-```ts
-useEffect(() => {
-  if (!isSessionActive) return;
+Use debounce so the same event cannot fire repeatedly within a short period.
 
-  Accelerometer.setUpdateInterval(100);
-  const sub = Accelerometer.addListener(handleReading);
+## Scoring
+- Score starts at 100
+- Apply penalties per detected event
+- Never go below 0
 
-  return () => sub.remove(); // cleanup is mandatory, no exceptions
-}, [isSessionActive]);
-```
+Suggested penalties:
+- Harsh Brake: -5
+- Harsh Acceleration: -5
+- Sharp Turn: -3
+- Aggressive Steering: -3
+- Phone Handling: -10
+- Excessive Movement: -2
 
-- Start sensors only when `isSessionActive === true`
-- Always unsubscribe in `useEffect` cleanup
-- Request DeviceMotion permissions on iOS before subscribing
+Safety ratings:
+- 90–100: Excellent
+- 75–89: Good
+- 60–74: Fair
+- 40–59: Poor
+- 0–39: Dangerous
 
----
-
-## Thresholds — `src/engine/thresholds.ts`
-
-```ts
-export const THRESHOLDS = {
-  HARSH_BRAKE:          -1.5,   // accel.y (g) — harsh braking
-  HARSH_ACCEL:           1.5,   // accel.y (g) — harsh acceleration
-  PHONE_HANDLING:        2.5,   // accel magnitude (g) — phone picked up
-  SHARP_TURN:            1.2,   // |gyro.z| (rad/s) — sharp turn
-  AGGRESSIVE_STEER:      2.0,   // |gyro.z| (rad/s) — aggressive steering
-  EXCESSIVE_MOVEMENT:    1.8,   // DeviceMotion magnitude (g)
-  DEBOUNCE_MS:           1500,  // min ms between same-type events
-} as const;
-```
-
-Never hardcode sensor values outside this file.
-
----
-
-## Scoring — `src/engine/scoreEngine.ts`
-
-```ts
-export const PENALTIES: Record<DriveEventType, number> = {
-  HARSH_BRAKE:        -5,
-  HARSH_ACCEL:        -5,
-  SHARP_TURN:         -3,
-  AGGRESSIVE_STEER:   -3,
-  PHONE_HANDLING:     -10,
-  EXCESSIVE_MOVEMENT: -2,
-};
-
-// Score starts at 100, never below 0
-export function calculateScore(events: DriveEvent[]): number {
-  const total = events.reduce((sum, e) => sum + Math.abs(PENALTIES[e.type]), 0);
-  return Math.max(0, 100 - total);
-}
-
-export const SAFETY_RATINGS = [
-  { min: 90, label: "Excellent", color: "#22c55e" },
-  { min: 75, label: "Good",      color: "#84cc16" },
-  { min: 60, label: "Fair",      color: "#eab308" },
-  { min: 40, label: "Poor",      color: "#f97316" },
-  { min: 0,  label: "Dangerous", color: "#ef4444" },
-];
-```
-
----
-
-## State Management
-
-No Zustand, no Context. Just React state in each screen.
-
-**`active.tsx` owns:**
-```ts
-const [events, setEvents] = useState<DriveEvent[]>([]);
-const [score, setScore] = useState(100);
-const [isSessionActive, setIsSessionActive] = useState(false);
-const startTimeRef = useRef<number | null>(null);
-const lastEventTimesRef = useRef<Record<DriveEventType, number>>({});
-```
-
-- `lastEventTimesRef` — debounce tracker, `useRef` not `useState` (no re-render needed)
-- Raw sensor readings are processed in the listener callback, never stored in state
-- On "End Drive": stop sensors → compute `SessionSummary` → navigate to `summary.tsx` with params
-
-**Passing data to `summary.tsx`:**
-```ts
-// Serialize summary as a route param (keep it small)
-router.push({
-  pathname: '/summary',
-  params: { summary: JSON.stringify(sessionSummary) }
-});
-```
-
----
-
-## Types — `src/types/index.ts`
-
-```ts
-export type DriveEventType =
-  | 'HARSH_BRAKE'
-  | 'HARSH_ACCEL'
-  | 'SHARP_TURN'
-  | 'AGGRESSIVE_STEER'
-  | 'PHONE_HANDLING'
-  | 'EXCESSIVE_MOVEMENT';
-
-export interface DriveEvent {
-  id: string;
-  type: DriveEventType;
-  timestamp: number;
-  sensorValue: number;
-}
-
-export interface SessionSummary {
-  startTime: number;
-  endTime: number;
-  durationMs: number;
-  events: DriveEvent[];
-  finalScore: number;
-  safetyRating: string;
-  eventBreakdown: Record<DriveEventType, number>;
-}
-```
-
----
+## Session Summary Must Show
+- Drive duration
+- Total events
+- Event breakdown
+- Final driving score
+- Safety rating
 
 ## Performance Rules
+- Use `useRef` for debounce timestamps and buffers
+- Do not store raw sensor values in state
+- Update UI only when an actual event occurs or a score changes
+- Remove all sensor subscriptions on stop/unmount
+- Keep components small and memoized where helpful
 
-- Use `useRef` for debounce tracking and sensor buffers — not `useState`
-- Never store raw sensor readings in React state
-- Debounce all events using `THRESHOLDS.DEBOUNCE_MS`
-- Memo `EventFeed` list items with `React.memo` to avoid re-render storms
+## Styling Rules
+- Dark theme only - simple black and white theme
+- Use stylesheet objects, not inline styles
+- Keep spacing consistent
+- Use one accent color for score and highlights
+- Make the UI readable on small screens
 
----
+## Implementation Priority
+1. App navigation
+2. Start/End drive session flow
+3. Sensor subscriptions
+4. Event detection
+5. Score engine
+6. Summary screen
+7. Dashboard polish
+8. Optional magnetometer
+9. Optional extra visuals
 
-## Styling
-
-- No inline styles at all! Use stylesheet everywhere, and make sure it looks good in all screen
-- Dark theme only — bg `#0a0a0a`, surface `#1a1a1a`
-- Accent: `#b100d0ff` for score and highlights
-- Severity colors: derive from the accent
-
----
-
-## Agent Rules
-
-1. **Thresholds only in `thresholds.ts`** — never inline sensor values elsewhere
-2. **Detection logic only in `engine/`** — pure functions, no React imports
-3. **Always clean up sensor subscriptions** — every `addListener` needs `sub.remove()` in cleanup
-4. **No raw sensor data in state** — process in callback, store only `DriveEvent` objects
-5. **No TypeScript `any`** — strict mode is on
-6. **Permissions before sensors** — always request on iOS before subscribing
-7. When adding a new event type → update all four: `thresholds.ts`, `PENALTIES`, `DriveEventType`, detection logic
-8. **Dont overcomplicate things unnecessarily** just do the simplest thihg that will work.
+## Output Quality
+- Clean naming
+- Small functions
+- Simple logic
+- Easy to explain in demo
+- Reliable over fancy
+- No over-engineering
+- No unnecessary comments

@@ -1,10 +1,17 @@
 export const COLORS = {
-    background: "#1c1c1c",
+    background: "#0a0a0a",
+    surface: "#1a1a1a",
+    accent: "#FFFFFF",
     text: "#FFFFFF",
-    textBorder: "#FFFFFF",
+    textSecondary: "#A0A0A0",
+    border: "#2E2E2E",
+    error: "#FF3B30",
+    success: "#34C759",
+    warning: "#FF9500",
 };
 
 export const FONT_SIZE = {
+  xs: 10,
   sm: 12,
   md: 16,
   lg: 20,
