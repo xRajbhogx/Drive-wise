@@ -1,8 +1,10 @@
 import React from "react";
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS, FONT_WEIGHT } from "../constants/theme";
+import { SessionSummary } from "../types";
+import { PENALTIES } from "../engine/scoreEngine";
 
 export default function SessionSummaryScreen() {
   const handleBackToHome = () => {
@@ -10,20 +12,48 @@ export default function SessionSummaryScreen() {
     router.replace("/");
   };
 
-  // Placeholder stats
-  const finalScore = 88;
-  const safetyRating = "Good"; // 75-89 is Good
-  const duration = "24m 15s";
-  const distance = "8.2 km";
-  const totalEventsCount = 3;
+  const params = useLocalSearchParams<{ summary?: string }>();
+  
+  let summary: SessionSummary | null = null;
+  try {
+    if (params.summary) {
+      summary = JSON.parse(params.summary);
+    }
+  } catch (e) {
+    console.error("Failed to parse driving session summary:", e);
+  }
+
+  const finalScore = summary ? summary.score : 88;
+  const safetyRating = summary ? summary.safetyRating : "Good";
+  const totalEventsCount = summary ? summary.totalEvents : 3;
+
+  const formatDuration = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    if (m > 0) {
+      return `${m}m ${s}s`;
+    }
+    return `${s}s`;
+  };
+  const duration = summary ? formatDuration(summary.durationSeconds) : "24m 15s";
+  const distance = summary ? `${(summary.durationSeconds * 0.0125).toFixed(1)} km` : "8.2 km";
+
+  const breakdownCounts = summary?.eventBreakdown || {
+    HARSH_BRAKE: 1,
+    HARSH_ACCEL: 0,
+    SHARP_TURN: 1,
+    AGGRESSIVE_STEER: 0,
+    PHONE_HANDLING: 0,
+    EXCESSIVE_MOVEMENT: 1,
+  };
 
   const eventBreakdown = [
-    { name: "Harsh Braking", count: 1, penalty: -5 },
-    { name: "Harsh Acceleration", count: 0, penalty: -5 },
-    { name: "Sharp Turns", count: 1, penalty: -3 },
-    { name: "Aggressive Steering", count: 0, penalty: -3 },
-    { name: "Phone Handling", count: 0, penalty: -10 },
-    { name: "Excessive Movement", count: 1, penalty: -2 },
+    { name: "Harsh Braking", count: breakdownCounts.HARSH_BRAKE, penalty: -PENALTIES.HARSH_BRAKE },
+    { name: "Harsh Acceleration", count: breakdownCounts.HARSH_ACCEL, penalty: -PENALTIES.HARSH_ACCEL },
+    { name: "Sharp Turns", count: breakdownCounts.SHARP_TURN, penalty: -PENALTIES.SHARP_TURN },
+    { name: "Aggressive Steering", count: breakdownCounts.AGGRESSIVE_STEER, penalty: -PENALTIES.AGGRESSIVE_STEER },
+    { name: "Phone Handling", count: breakdownCounts.PHONE_HANDLING, penalty: -PENALTIES.PHONE_HANDLING },
+    { name: "Excessive Movement", count: breakdownCounts.EXCESSIVE_MOVEMENT, penalty: -PENALTIES.EXCESSIVE_MOVEMENT },
   ];
 
   return (

@@ -1,12 +1,69 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS, FONT_WEIGHT } from "../constants/theme";
+import { SessionSummary } from "../types";
+
+let lastSessionSummary: SessionSummary | null = null;
+
+export function setLastSessionSummary(summary: SessionSummary) {
+  lastSessionSummary = summary;
+}
+
+export function getLastSessionSummary() {
+  return lastSessionSummary;
+}
 
 export default function HomeScreen() {
+  const [lastSession, setLastSession] = useState<SessionSummary | null>(null);
+
+  useEffect(() => {
+    setLastSession(getLastSessionSummary());
+  }, []);
+
   const handleStartDrive = () => {
     router.push("/ActiveDriveScreen");
+  };
+
+  const formatDuration = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    if (m > 0) {
+      return `${m}m ${s}s`;
+    }
+    return `${s}s`;
+  };
+
+  const getRatingColor = (rating: string) => {
+    switch (rating) {
+      case "Excellent":
+      case "Good":
+        return COLORS.success;
+      case "Fair":
+        return COLORS.warning;
+      default:
+        return COLORS.error;
+    }
+  };
+
+  const getEventLabel = (type: string) => {
+    switch (type) {
+      case "HARSH_BRAKE":
+        return "Harsh Braking";
+      case "HARSH_ACCEL":
+        return "Harsh Acceleration";
+      case "SHARP_TURN":
+        return "Sharp Turns";
+      case "AGGRESSIVE_STEER":
+        return "Aggressive Steering";
+      case "PHONE_HANDLING":
+        return "Phone Handling";
+      case "EXCESSIVE_MOVEMENT":
+        return "Excessive Movement (Device Sway)";
+      default:
+        return type;
+    }
   };
 
   return (
@@ -38,46 +95,59 @@ export default function HomeScreen() {
         <View style={styles.lastSessionContainer}>
           <Text style={styles.sectionTitle}>LAST DRIVE SUMMARY</Text>
           
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View>
-                <Text style={styles.cardLabel}>Safety Score</Text>
-                <Text style={styles.safetyRatingText}>Excellent</Text>
+          {lastSession ? (
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <View>
+                  <Text style={styles.cardLabel}>Safety Score</Text>
+                  <Text style={[styles.safetyRatingText, { color: getRatingColor(lastSession.safetyRating) }]}>
+                    {lastSession.safetyRating}
+                  </Text>
+                </View>
+                <Text style={styles.scoreText}>{lastSession.score}</Text>
               </View>
-              <Text style={styles.scoreText}>95</Text>
+
+              <View style={styles.separator} />
+
+              <View style={styles.statsGrid}>
+                <View style={styles.statBox}>
+                  <Text style={styles.statValue}>{formatDuration(lastSession.durationSeconds)}</Text>
+                  <Text style={styles.statLabel}>Duration</Text>
+                </View>
+                
+                <View style={styles.statBox}>
+                  <Text style={styles.statValue}>{lastSession.totalEvents}</Text>
+                  <Text style={styles.statLabel}>Events</Text>
+                </View>
+
+                <View style={styles.statBox}>
+                  <Text style={styles.statValue}>{(lastSession.durationSeconds * 0.0125).toFixed(1)} km</Text>
+                  <Text style={styles.statLabel}>Distance</Text>
+                </View>
+              </View>
+
+              {lastSession.totalEvents > 0 && (
+                <View style={styles.eventBreakdownContainer}>
+                  <Text style={styles.breakdownTitle}>Event Breakdown</Text>
+                  {Object.entries(lastSession.eventBreakdown).map(([key, count]) => {
+                    if (count === 0) return null;
+                    const label = getEventLabel(key);
+                    return (
+                      <View key={key} style={styles.eventRow}>
+                        <Text style={styles.eventLabel}>{label}</Text>
+                        <Text style={styles.eventCount}>{count}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
             </View>
-
-            <View style={styles.separator} />
-
-            <View style={styles.statsGrid}>
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>18m 42s</Text>
-                <Text style={styles.statLabel}>Duration</Text>
-              </View>
-              
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>2</Text>
-                <Text style={styles.statLabel}>Events</Text>
-              </View>
-
-              <View style={styles.statBox}>
-                <Text style={styles.statValue}>5.4 km</Text>
-                <Text style={styles.statLabel}>Distance</Text>
-              </View>
+          ) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No drives recorded yet.</Text>
+              <Text style={styles.emptySubtext}>Your safety summary will appear here after you finish a drive.</Text>
             </View>
-
-            <View style={styles.eventBreakdownContainer}>
-              <Text style={styles.breakdownTitle}>Event Breakdown</Text>
-              <View style={styles.eventRow}>
-                <Text style={styles.eventLabel}>Harsh Braking</Text>
-                <Text style={styles.eventCount}>1</Text>
-              </View>
-              <View style={styles.eventRow}>
-                <Text style={styles.eventLabel}>Excessive Movement</Text>
-                <Text style={styles.eventCount}>1</Text>
-              </View>
-            </View>
-          </View>
+          )}
         </View>
 
       </ScrollView>
@@ -219,5 +289,26 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     fontWeight: FONT_WEIGHT.semibold,
     color: COLORS.text,
+  },
+  emptyCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.xl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyText: {
+    color: COLORS.text,
+    fontSize: FONT_SIZE.md,
+    fontWeight: FONT_WEIGHT.semibold,
+    marginBottom: SPACING.xs,
+  },
+  emptySubtext: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZE.sm,
+    textAlign: "center",
+    lineHeight: 18,
   },
 });
