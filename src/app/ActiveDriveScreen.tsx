@@ -1,9 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { router } from "expo-router";
 import * as Location from "expo-location";
-import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS, FONT_WEIGHT } from "../constants/theme";
 import { useDrivingSensors } from "../hooks/useDrivingSensors";
 import {
   detectHarshBrake,
@@ -16,7 +13,10 @@ import {
 import { getSafetyRating, PENALTIES } from "../engine/scoreEngine";
 import { THRESHOLDS } from "../engine/thresholds";
 import { DriveEvent, DriveEventType, SessionSummary } from "../types";
-import { setLastSessionSummary } from "./index";
+import { setLastSessionSummary, addSessionToHistory } from "../store/historyStore";
+import StartingView from "../components/ActiveDrive/StartingView";
+import SensorErrorView from "../components/ActiveDrive/SensorErrorView";
+import ActiveDashboardView from "../components/ActiveDrive/ActiveDashboardView";
 
 // --- Types ---
 interface SensorReading {
@@ -38,6 +38,7 @@ export default function ActiveDriveScreen() {
 
   // Score and event counts are the only state that drives UI updates
   const [score, setScore] = useState<number>(100);
+  const scoreRef = useRef<number>(100); // mirrors score for stale-closure-free reads
   const [eventCounts, setEventCounts] = useState<Record<DriveEventType, number>>({
     HARSH_BRAKE: 0,
     HARSH_ACCEL: 0,
@@ -71,7 +72,6 @@ export default function ActiveDriveScreen() {
   const locationSubscriptionRef = useRef<Location.LocationSubscription | null>(null);
 
   // --- Core event handler ---
-  // Uses functional state updates so no stale closure issues.
   const handleEventDetected = useCallback((type: DriveEventType, value: number) => {
     const now = Date.now();
     const lastTime = lastEventTimesRef.current[type] ?? 0;
@@ -90,7 +90,9 @@ export default function ActiveDriveScreen() {
     eventsRef.current = [...eventsRef.current, newEvent];
 
     // Incremental score update — no full recalculation
-    setScore((prev) => Math.max(0, prev - PENALTIES[type]));
+    const newScore = Math.max(0, scoreRef.current - PENALTIES[type]);
+    scoreRef.current = newScore;
+    setScore(newScore);
 
     // Increment count for the specific event type
     setEventCounts((prev) => ({
@@ -255,6 +257,7 @@ export default function ActiveDriveScreen() {
     setIsSessionActive(false);
 
     const endTime = Date.now();
+    const startedAt = startTimeRef.current ?? endTime;
     const durationSeconds = startTimeRef.current
       ? Math.floor((endTime - startTimeRef.current) / 1000)
       : 0;
@@ -273,475 +276,48 @@ export default function ActiveDriveScreen() {
       eventBreakdown[e.type]++;
     }
 
-    // Read latest score via functional update to avoid stale closure
-    setScore((currentScore) => {
-      const safetyRating = getSafetyRating(currentScore);
-      const summary: SessionSummary = {
-        durationSeconds,
-        totalEvents: eventsRef.current.length,
-        eventBreakdown,
-        score: currentScore,
-        safetyRating,
-      };
+    // Read score directly from ref — no stale closure, no setState side effects
+    const currentScore = scoreRef.current;
+    const safetyRating = getSafetyRating(currentScore);
+    const summary: SessionSummary = {
+      durationSeconds,
+      totalEvents: eventsRef.current.length,
+      eventBreakdown,
+      score: currentScore,
+      safetyRating,
+    };
 
-      setLastSessionSummary(summary);
-
+    Promise.all([
+      setLastSessionSummary(summary),
+      addSessionToHistory(summary, startedAt),
+    ]).finally(() => {
       router.replace({
         pathname: "/SessionSummary",
         params: { summary: JSON.stringify(summary) },
       });
-
-      return currentScore; // No change
     });
   }, [stopSensors, stopDisplayInterval, stopLocationTracking]);
 
-  // --- Score color based on value ---
-  const scoreColor = useMemo(() => {
-    if (score >= 90) return COLORS.success;
-    if (score >= 60) return COLORS.warning;
-    return COLORS.error;
-  }, [score]);
+  if (sensorError) {
+    return (
+      <SensorErrorView
+        error={sensorError}
+        onBackToHome={() => router.replace("/")}
+      />
+    );
+  }
 
-  // --- Format helpers ---
-  const fmt = (n: number) => {
-    const sign = n >= 0 ? "+" : "";
-    return `${sign}${n.toFixed(3)}`;
-  };
+  if (!isSessionActive) {
+    return <StartingView onCancel={() => router.back()} />;
+  }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Header ── */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Drivewise</Text>
-          {isSessionActive ? (
-            <View style={styles.badgeLive}>
-              <View style={styles.badgeDot} />
-              <Text style={styles.badgeTextLive}>LIVE</Text>
-            </View>
-          ) : sensorError ? (
-            <View style={styles.badgeError}>
-              <Text style={styles.badgeTextError}>SENSOR ERROR</Text>
-            </View>
-          ) : (
-            <View style={styles.badgeStarting}>
-              <Text style={styles.badgeTextStarting}>STARTING…</Text>
-            </View>
-          )}
-        </View>
-
-        {/* ── Speed bar ── */}
-        <View style={styles.speedBar}>
-          <View style={styles.speedBlock}>
-            <Text style={styles.speedValue}>
-              {speedKmh !== null ? speedKmh.toFixed(1) : "--"}
-            </Text>
-            <Text style={styles.speedUnit}>km/h</Text>
-          </View>
-          <View style={styles.speedDivider} />
-          <View style={styles.speedBlock}>
-            <Text style={styles.speedValue}>{eventsRef.current.length}</Text>
-            <Text style={styles.speedUnit}>events</Text>
-          </View>
-          <View style={styles.speedDivider} />
-          <View style={styles.speedBlock}>
-            <Text style={[styles.speedValue, { color: scoreColor }]}>{score}</Text>
-            <Text style={styles.speedUnit}>score</Text>
-          </View>
-        </View>
-
-        {/* ── Sensor Error State ── */}
-        {sensorError && (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Sensors Unavailable</Text>
-            <Text style={styles.errorBody}>{sensorError}</Text>
-          </View>
-        )}
-
-        {/* ── Live Sensor Readings ── */}
-        {isSessionActive && (
-          <View style={styles.sensorPanel}>
-            <Text style={styles.sectionTitle}>LIVE SENSOR READINGS</Text>
-
-            <View style={styles.sensorRow}>
-              <Text style={styles.sensorLabel}>ACCEL</Text>
-              <View style={styles.sensorValues}>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>X</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.accel.x)}</Text>
-                </View>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>Y</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.accel.y)}</Text>
-                </View>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>Z</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.accel.z)}</Text>
-                </View>
-              </View>
-              <Text style={styles.sensorUnit}>g</Text>
-            </View>
-
-            <View style={styles.sensorDivider} />
-
-            <View style={styles.sensorRow}>
-              <Text style={styles.sensorLabel}>GYRO</Text>
-              <View style={styles.sensorValues}>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>X</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.gyro.x)}</Text>
-                </View>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>Y</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.gyro.y)}</Text>
-                </View>
-                <View style={styles.sensorAxis}>
-                  <Text style={styles.axisLabel}>Z</Text>
-                  <Text style={styles.axisValue}>{fmt(liveReadings.gyro.z)}</Text>
-                </View>
-              </View>
-              <Text style={styles.sensorUnit}>rad/s</Text>
-            </View>
-
-            <View style={styles.sensorDivider} />
-
-            <View style={styles.sensorRow}>
-              <Text style={styles.sensorLabel}>MOTION</Text>
-              <View style={styles.sensorValues}>
-                <View style={[styles.sensorAxis, { flex: 3 }]}>
-                  <Text style={styles.axisLabel}>MAG</Text>
-                  <Text
-                    style={[
-                      styles.axisValue,
-                      liveReadings.motionMag >= THRESHOLDS.EXCESSIVE_MOVEMENT
-                        ? { color: COLORS.error }
-                        : {},
-                    ]}
-                  >
-                    {liveReadings.motionMag.toFixed(3)}
-                  </Text>
-                </View>
-              </View>
-              <Text style={styles.sensorUnit}>m/s²</Text>
-            </View>
-          </View>
-        )}
-
-        {/* ── Event Counters Grid ── */}
-        <View style={styles.eventsSection}>
-          <Text style={styles.sectionTitle}>DETECTED EVENTS</Text>
-
-          <View style={styles.gridRow}>
-            <EventCard
-              label="Harsh Braking"
-              count={eventCounts.HARSH_BRAKE}
-              color={COLORS.warning}
-            />
-            <EventCard
-              label="Harsh Accel."
-              count={eventCounts.HARSH_ACCEL}
-              color={COLORS.warning}
-            />
-          </View>
-
-          <View style={styles.gridRow}>
-            <EventCard
-              label="Sharp Turns"
-              count={eventCounts.SHARP_TURN}
-              color={COLORS.warning}
-            />
-            <EventCard
-              label="Aggressive Steer"
-              count={eventCounts.AGGRESSIVE_STEER}
-              color={COLORS.warning}
-            />
-          </View>
-
-          <View style={styles.gridRow}>
-            <EventCard
-              label="Phone Handling"
-              count={eventCounts.PHONE_HANDLING}
-              color={COLORS.error}
-            />
-            <EventCard
-              label="Device Sway"
-              count={eventCounts.EXCESSIVE_MOVEMENT}
-              color={COLORS.warning}
-            />
-          </View>
-        </View>
-
-        {/* ── End Drive Button ── */}
-        <TouchableOpacity
-          style={[styles.endButton, !isSessionActive && styles.endButtonDisabled]}
-          onPress={handleEndDrive}
-          activeOpacity={0.8}
-          disabled={!isSessionActive}
-        >
-          <Text style={styles.endButtonText}>End Drive</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+    <ActiveDashboardView
+      speedKmh={speedKmh}
+      eventCounts={eventCounts}
+      score={score}
+      liveReadings={liveReadings}
+      onEndDrive={handleEndDrive}
+    />
   );
 }
-
-// --- Sub-component: EventCard ---
-interface EventCardProps {
-  label: string;
-  count: number;
-  color: string;
-}
-
-function EventCard({ label, count, color }: EventCardProps) {
-  const active = count > 0;
-  return (
-    <View style={[styles.counterCard, active ? { borderColor: color } : {}]}>
-      <Text style={[styles.counterValue, active ? { color } : {}]}>{count}</Text>
-      <Text style={styles.counterLabel}>{label}</Text>
-    </View>
-  );
-}
-
-// --- Styles ---
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: SPACING.lg,
-    paddingBottom: SPACING.xl,
-    flexGrow: 1,
-  },
-
-  // Header
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.md,
-  },
-  title: {
-    fontSize: FONT_SIZE.xl,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.text,
-  },
-  badgeLive: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(52, 199, 89, 0.15)",
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  badgeDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: COLORS.success,
-    marginRight: 5,
-  },
-  badgeTextLive: {
-    fontSize: 10,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.success,
-    letterSpacing: 0.5,
-  },
-  badgeError: {
-    backgroundColor: "rgba(255, 59, 48, 0.15)",
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  badgeTextError: {
-    fontSize: 10,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.error,
-    letterSpacing: 0.5,
-  },
-  badgeStarting: {
-    backgroundColor: "rgba(160,160,160,0.15)",
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.sm,
-    borderRadius: BORDER_RADIUS.sm,
-  },
-  badgeTextStarting: {
-    fontSize: 10,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.textSecondary,
-    letterSpacing: 0.5,
-  },
-
-  // Speed / stats bar
-  speedBar: {
-    flexDirection: "row",
-    backgroundColor: COLORS.surface,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-    alignItems: "center",
-    justifyContent: "space-around",
-  },
-  speedBlock: {
-    flex: 1,
-    alignItems: "center",
-  },
-  speedValue: {
-    fontSize: FONT_SIZE.xxl,
-    fontWeight: FONT_WEIGHT.extrabold,
-    color: COLORS.text,
-  },
-  speedUnit: {
-    fontSize: FONT_SIZE.xs,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-    letterSpacing: 0.5,
-  },
-  speedDivider: {
-    width: 1,
-    height: 36,
-    backgroundColor: COLORS.border,
-  },
-
-  // Error card
-  errorCard: {
-    backgroundColor: "rgba(255, 59, 48, 0.08)",
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    borderColor: "rgba(255, 59, 48, 0.3)",
-    padding: SPACING.lg,
-    marginBottom: SPACING.md,
-  },
-  errorTitle: {
-    fontSize: FONT_SIZE.md,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.error,
-    marginBottom: SPACING.xs,
-  },
-  errorBody: {
-    fontSize: FONT_SIZE.sm,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
-  },
-
-  // Sensor panel
-  sensorPanel: {
-    backgroundColor: COLORS.surface,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: SPACING.md,
-    marginBottom: SPACING.md,
-  },
-  sectionTitle: {
-    fontSize: FONT_SIZE.xs,
-    fontWeight: FONT_WEIGHT.semibold,
-    color: COLORS.textSecondary,
-    letterSpacing: 1.5,
-    marginBottom: SPACING.sm,
-  },
-  sensorRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 6,
-  },
-  sensorLabel: {
-    fontSize: 9,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.textSecondary,
-    letterSpacing: 1,
-    width: 44,
-  },
-  sensorValues: {
-    flex: 1,
-    flexDirection: "row",
-  },
-  sensorAxis: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  axisLabel: {
-    fontSize: 9,
-    color: COLORS.textSecondary,
-    fontWeight: FONT_WEIGHT.semibold,
-  },
-  axisValue: {
-    fontSize: 11,
-    fontWeight: FONT_WEIGHT.semibold,
-    color: COLORS.text,
-    fontVariant: ["tabular-nums"],
-  },
-  sensorUnit: {
-    fontSize: 9,
-    color: COLORS.textSecondary,
-    width: 32,
-    textAlign: "right",
-  },
-  sensorDivider: {
-    height: 1,
-    backgroundColor: COLORS.border,
-    marginVertical: 2,
-  },
-
-  // Event grid
-  eventsSection: {
-    marginBottom: SPACING.md,
-    gap: SPACING.sm,
-  },
-  gridRow: {
-    flexDirection: "row",
-    gap: SPACING.sm,
-  },
-  counterCard: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: BORDER_RADIUS.md,
-    paddingVertical: SPACING.md,
-    paddingHorizontal: SPACING.sm,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  counterValue: {
-    fontSize: FONT_SIZE.xl,
-    fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.text,
-  },
-  counterLabel: {
-    fontSize: 10,
-    color: COLORS.textSecondary,
-    marginTop: 3,
-    textAlign: "center",
-  },
-
-  // End button
-  endButton: {
-    backgroundColor: COLORS.error,
-    paddingVertical: SPACING.md,
-    borderRadius: BORDER_RADIUS.full,
-    alignItems: "center",
-    width: "100%",
-    marginTop: SPACING.sm,
-  },
-  endButtonDisabled: {
-    opacity: 0.45,
-  },
-  endButtonText: {
-    color: COLORS.text,
-    fontSize: FONT_SIZE.lg,
-    fontWeight: FONT_WEIGHT.bold,
-    letterSpacing: 1,
-  },
-});

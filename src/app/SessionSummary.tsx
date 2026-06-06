@@ -7,12 +7,17 @@ import { SessionSummary } from "../types";
 import { PENALTIES } from "../engine/scoreEngine";
 
 export default function SessionSummaryScreen() {
-  const handleBackToHome = () => {
-    // Navigate back to the home screen, clearing the history stack
-    router.replace("/");
-  };
+  const params = useLocalSearchParams<{ summary?: string; from?: string }>();
 
-  const params = useLocalSearchParams<{ summary?: string }>();
+  const fromHistory = params.from === "history";
+
+  const handleBack = () => {
+    if (fromHistory) {
+      router.back();
+    } else {
+      router.replace("/");
+    }
+  };
   
   let summary: SessionSummary | null = null;
   try {
@@ -23,9 +28,9 @@ export default function SessionSummaryScreen() {
     console.error("Failed to parse driving session summary:", e);
   }
 
-  const finalScore = summary ? summary.score : 88;
-  const safetyRating = summary ? summary.safetyRating : "Good";
-  const totalEventsCount = summary ? summary.totalEvents : 3;
+  const finalScore = summary ? summary.score : 0;
+  const safetyRating = summary ? summary.safetyRating : "Poor";
+  const totalEventsCount = summary ? summary.totalEvents : 0;
 
   const formatDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -39,13 +44,24 @@ export default function SessionSummaryScreen() {
   const distance = summary ? `${(summary.durationSeconds * 0.0125).toFixed(1)} km` : "8.2 km";
 
   const breakdownCounts = summary?.eventBreakdown || {
-    HARSH_BRAKE: 1,
+    HARSH_BRAKE: 0,
     HARSH_ACCEL: 0,
-    SHARP_TURN: 1,
+    SHARP_TURN: 0,
     AGGRESSIVE_STEER: 0,
     PHONE_HANDLING: 0,
-    EXCESSIVE_MOVEMENT: 1,
+    EXCESSIVE_MOVEMENT: 0,
   };
+
+  const getRatingColor = (rating: string): string => {
+    switch (rating) {
+      case "Excellent":
+      case "Good":     return COLORS.success;
+      case "Fair":     return COLORS.warning;
+      default:         return COLORS.error;
+    }
+  };
+
+  const ratingColor = getRatingColor(safetyRating);
 
   const eventBreakdown = [
     { name: "Harsh Braking", count: breakdownCounts.HARSH_BRAKE, penalty: -PENALTIES.HARSH_BRAKE },
@@ -70,11 +86,11 @@ export default function SessionSummaryScreen() {
         <View style={styles.scoreCard}>
           <Text style={styles.scoreLabel}>DRIVING SAFETY SCORE</Text>
           <View style={styles.scoreRow}>
-            <Text style={styles.scoreValue}>{finalScore}</Text>
+            <Text style={[styles.scoreValue, { color: ratingColor }]}>{finalScore}</Text>
             <Text style={styles.scoreMax}>/100</Text>
           </View>
-          <View style={styles.ratingBadge}>
-            <Text style={styles.ratingText}>{safetyRating}</Text>
+          <View style={[styles.ratingBadge, { backgroundColor: `${ratingColor}22` }]}>
+            <Text style={[styles.ratingText, { color: ratingColor }]}>{safetyRating}</Text>
           </View>
         </View>
 
@@ -125,12 +141,14 @@ export default function SessionSummaryScreen() {
         </View>
 
         {/* Home Button */}
-        <TouchableOpacity 
-          style={styles.homeButton} 
-          onPress={handleBackToHome}
+        <TouchableOpacity
+          style={styles.homeButton}
+          onPress={handleBack}
           activeOpacity={0.8}
         >
-          <Text style={styles.homeButtonText}>Return to Home</Text>
+          <Text style={styles.homeButtonText}>
+            {fromHistory ? "← Back to History" : "Return to Home"}
+          </Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -194,7 +212,6 @@ const styles = StyleSheet.create({
     fontWeight: FONT_WEIGHT.medium,
   },
   ratingBadge: {
-    backgroundColor: "rgba(52, 199, 89, 0.15)",
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.sm,
@@ -202,7 +219,6 @@ const styles = StyleSheet.create({
   ratingText: {
     fontSize: FONT_SIZE.md,
     fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.success,
   },
   statsCard: {
     backgroundColor: COLORS.surface,

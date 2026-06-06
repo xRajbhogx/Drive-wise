@@ -1,26 +1,28 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router } from "expo-router";
-import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS, FONT_WEIGHT } from "../constants/theme";
-import { SessionSummary } from "../types";
-
-let lastSessionSummary: SessionSummary | null = null;
-
-export function setLastSessionSummary(summary: SessionSummary) {
-  lastSessionSummary = summary;
-}
-
-export function getLastSessionSummary() {
-  return lastSessionSummary;
-}
+import { router, useFocusEffect } from "expo-router";
+import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS, FONT_WEIGHT } from "../../constants/theme";
+import { getLastSessionSummary } from "../../store/historyStore";
+import { SessionSummary } from "../../types";
 
 export default function HomeScreen() {
   const [lastSession, setLastSession] = useState<SessionSummary | null>(null);
 
-  useEffect(() => {
-    setLastSession(getLastSessionSummary());
-  }, []);
+  // Refresh last session every time this tab comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getLastSessionSummary().then((summary) => {
+        if (active) {
+          setLastSession(summary);
+        }
+      });
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   const handleStartDrive = () => {
     router.push("/ActiveDriveScreen");
@@ -29,10 +31,7 @@ export default function HomeScreen() {
   const formatDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
-    if (m > 0) {
-      return `${m}m ${s}s`;
-    }
-    return `${s}s`;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
   };
 
   const getRatingColor = (rating: string) => {
@@ -49,28 +48,21 @@ export default function HomeScreen() {
 
   const getEventLabel = (type: string) => {
     switch (type) {
-      case "HARSH_BRAKE":
-        return "Harsh Braking";
-      case "HARSH_ACCEL":
-        return "Harsh Acceleration";
-      case "SHARP_TURN":
-        return "Sharp Turns";
-      case "AGGRESSIVE_STEER":
-        return "Aggressive Steering";
-      case "PHONE_HANDLING":
-        return "Phone Handling";
-      case "EXCESSIVE_MOVEMENT":
-        return "Excessive Movement (Device Sway)";
-      default:
-        return type;
+      case "HARSH_BRAKE":         return "Harsh Braking";
+      case "HARSH_ACCEL":         return "Harsh Acceleration";
+      case "SHARP_TURN":          return "Sharp Turns";
+      case "AGGRESSIVE_STEER":    return "Aggressive Steering";
+      case "PHONE_HANDLING":      return "Phone Handling";
+      case "EXCESSIVE_MOVEMENT":  return "Excessive Movement";
+      default:                    return type;
     }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
-        
-        {/* Header Section */}
+
+        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.titlePrefix}>
             DRIVE<Text style={styles.titleSuffix}>WISE</Text>
@@ -80,10 +72,10 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {/* Action Button Section */}
+        {/* Start Drive Button */}
         <View style={styles.actionContainer}>
-          <TouchableOpacity 
-            style={styles.startButton} 
+          <TouchableOpacity
+            style={styles.startButton}
             onPress={handleStartDrive}
             activeOpacity={0.8}
           >
@@ -94,7 +86,7 @@ export default function HomeScreen() {
         {/* Last Session Card */}
         <View style={styles.lastSessionContainer}>
           <Text style={styles.sectionTitle}>LAST DRIVE SUMMARY</Text>
-          
+
           {lastSession ? (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -104,7 +96,9 @@ export default function HomeScreen() {
                     {lastSession.safetyRating}
                   </Text>
                 </View>
-                <Text style={styles.scoreText}>{lastSession.score}</Text>
+                <Text style={[styles.scoreText, { color: getRatingColor(lastSession.safetyRating) }]}>
+                  {lastSession.score}
+                </Text>
               </View>
 
               <View style={styles.separator} />
@@ -114,12 +108,10 @@ export default function HomeScreen() {
                   <Text style={styles.statValue}>{formatDuration(lastSession.durationSeconds)}</Text>
                   <Text style={styles.statLabel}>Duration</Text>
                 </View>
-                
                 <View style={styles.statBox}>
                   <Text style={styles.statValue}>{lastSession.totalEvents}</Text>
                   <Text style={styles.statLabel}>Events</Text>
                 </View>
-
                 <View style={styles.statBox}>
                   <Text style={styles.statValue}>{(lastSession.durationSeconds * 0.0125).toFixed(1)} km</Text>
                   <Text style={styles.statLabel}>Distance</Text>
@@ -131,10 +123,9 @@ export default function HomeScreen() {
                   <Text style={styles.breakdownTitle}>Event Breakdown</Text>
                   {Object.entries(lastSession.eventBreakdown).map(([key, count]) => {
                     if (count === 0) return null;
-                    const label = getEventLabel(key);
                     return (
                       <View key={key} style={styles.eventRow}>
-                        <Text style={styles.eventLabel}>{label}</Text>
+                        <Text style={styles.eventLabel}>{getEventLabel(key)}</Text>
                         <Text style={styles.eventCount}>{count}</Text>
                       </View>
                     );
@@ -145,7 +136,9 @@ export default function HomeScreen() {
           ) : (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>No drives recorded yet.</Text>
-              <Text style={styles.emptySubtext}>Your safety summary will appear here after you finish a drive.</Text>
+              <Text style={styles.emptySubtext}>
+                Your safety summary will appear here after you finish a drive.
+              </Text>
             </View>
           )}
         </View>
@@ -233,13 +226,11 @@ const styles = StyleSheet.create({
   safetyRatingText: {
     fontSize: FONT_SIZE.xl,
     fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.success,
     marginTop: SPACING.xs,
   },
   scoreText: {
     fontSize: FONT_SIZE.xxxl,
     fontWeight: FONT_WEIGHT.bold,
-    color: COLORS.accent,
   },
   separator: {
     height: 1,
