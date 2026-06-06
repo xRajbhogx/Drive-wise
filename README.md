@@ -2,6 +2,8 @@
 
 Drivewise is a mobile application for iOS and Android that uses on-device sensors to analyze driving behavior in real-time, compute safety scores, and classify driver performance. The app is built using React Native and Expo, featuring a dark-themed user interface designed for high contrast and readability during drives.
 
+![Drivewise App Screenshots](assets/images/app_screenshots.jpg)
+
 ---
 
 ## Key Features

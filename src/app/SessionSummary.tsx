@@ -74,7 +74,9 @@ export default function SessionSummaryScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.container}>
+      <ScrollView 
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}>
         
         {/* Header */}
         <View style={styles.header}>
